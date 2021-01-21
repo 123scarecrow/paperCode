@@ -191,11 +191,69 @@ class BasicModel:
             #(batchsize,nodenum,features)
             lstm_inputs = gat_outputs[:,self.node_num,:]
          
-            output, state = lstm_block(lstm_inputs, state,
-                                       weights['kernel_lstm'], weights['b_lstm'],
-                                       tf.nn.tanh)
+            # Define an input series and encode it with an LSTM. 
+            encoder_inputs = lstm_inputs
+            encoder_outputs, state_h = lstm_block(lstm_inputs, state,
+                                   weights['kernel_lstm'], weights['b_lstm'],
+                                   tf.nn.tanh)
+
+            # We discard `encoder_outputs` and only keep the final states. These represent the "context"
+            # vector that we use as the basis for decoding.
+            encoder_states = state_h
+
+            # Set up the decoder, using `encoder_states` as initial state.
+            # This is where teacher forcing inputs are fed in.
+            decoder_inputs = lstm_inputs
+
+            # We set up our decoder using `encoder_states` as initial state.  
+            # We return full output sequences and return internal states as well. 
+            # We don't use the return states in the training model, but we will use them in inference.
+            decoder_outputs, _ = lstm_block(lstm_inputs, state,
+                                   weights['kernel_lstm'], weights['b_lstm'],
+                                   tf.nn.tanh)
+
+            #decoder_dense = Dense(1) # 1 continuous output at each timestep
+            #decoder_outputs = decoder_dense(decoder_outputs,encoder_states)
+        
+            #output, state = lstm_block(lstm_inputs, state,
+            #                           weights['kernel_lstm'], weights['b_lstm'],
+            #                          tf.nn.tanh)
   
-        return output
+        return decoder_outputs
+
+    # returns train, inference_encoder and inference_decoder models
+    def seq2seq_models(self,n_input, n_output, n_units):
+        # define training encoder
+        encoder_inputs = Input(shape=(None, n_input))
+        encoder = lstm_block(lstm_inputs, state,
+                               weights['kernel_lstm'], weights['b_lstm'],
+                               tf.nn.tanh)
+        encoder_outputs, state = encoder(encoder_inputs)
+        encoder_states = state
+        # define training decoder
+        decoder_inputs = Input(shape=(None, n_output))
+        decoder_lstm = lstm_block(lstm_inputs, state,
+                               weights['kernel_lstm'], weights['b_lstm'],
+                               tf.nn.tanh)
+        decoder_outputs, _, _ = decoder_lstm(decoder_inputs, encoder_states)
+        decoder_dense = Dense(n_output, activation='softmax')
+        decoder_outputs = decoder_dense(decoder_outputs)
+        model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
+        # define inference encoder
+        encoder_model = Model(encoder_inputs, encoder_states)
+        # define inference decoder
+        decoder_state_input_h = Input(shape=(n_units,))
+        decoder_state_input_c = Input(shape=(n_units,))
+        decoder_states_inputs = [decoder_state_input_h, decoder_state_input_c]
+        decoder_outputs, state_h, state_c = decoder_lstm(decoder_inputs, initial_state=decoder_states_inputs)
+        decoder_states = [state_h, state_c]
+        decoder_outputs = decoder_dense(decoder_outputs)
+        decoder_model = Model([decoder_inputs] + decoder_states_inputs, [decoder_outputs] + decoder_states)
+
+        # return all models
+        return model, encoder_model, decoder_model
+
+
 
     def forward_convlstm(self, inp, weights,bias_in,feature_size, nb_nodes,                          
                                 hid_units, n_heads,
